@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgroRisk MS - Inteligência Atuarial</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;800&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="background-effects">
+        <div class="glow glow-1"></div>
+        <div class="glow glow-2"></div>
+        <div class="glow glow-3"></div>
+        <div class="grid-overlay"></div>
+    </div>
+
+    <nav class="navbar">
+        <div class="logo">
+            <span class="logo-icon">🌿</span> AgroRisk <span class="highlight">MS</span>
+        </div>
+        <div class="tabs">
+            <button class="tab-btn active" data-target="presentation">Apresentação</button>
+            <button class="tab-btn" data-target="pipeline">O Pipeline</button>
+        </div>
+    </nav>
+
+    <main class="content-area">
+        <!-- ABA DE APRESENTAÇÃO -->
+        <section id="presentation" class="tab-content active">
+            <div class="presentation-container animate-fade-in">
+                <header class="hero">
+                    <h1 class="hero-title animate-up">Visão Geral do Aplicativo</h1>
+                    <p class="hero-subtitle animate-up delay-1">Explore a interface e as funcionalidades do AgroRisk MS para precificação de risco biológico de forma inteligente e visual.</p>
+                </header>
+                
+                <div class="app-presentation animate-up delay-2">
+                    <div class="image-wrapper">
+                        <div class="glass-reflection"></div>
+                        <img src="/base_dir/pipeline app.png" alt="Apresentação do Pipeline App" class="app-screenshot">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ABA DO PIPELINE -->
+        <section id="pipeline" class="tab-content">
+            <header class="hero">
+                <h1 class="hero-title">Pipeline de Inteligência Atuarial</h1>
+                <p class="hero-subtitle">Do dado bruto à precificação de risco biológico em minutos.</p>
+            </header>
+
+            <div class="timeline-container">
+                <!-- Passo 1 -->
+                <div class="card scroll-animate">
+                    <div class="card-icon">
+                        <img src="/brain_images/data_prep_icon_1780336641990.png" alt="Fusão Geográfica e Histórica">
+                    </div>
+                    <div class="card-content">
+                        <span class="step-badge">Passo 1</span>
+                        <h2>Fusão Geográfica e Histórica (Data Prep)</h2>
+                        <p>Integração da malha cartográfica digital de Mato Grosso do Sul (geobr / IBGE 2022) com o cálculo trigonométrico de centroides (Latitude/Longitude). Acoplamento do banco de dados histórico de produção regional (2009–2024) via reestruturação matricial (Tidy Data).</p>
+                    </div>
+                </div>
+
+                <!-- Passo 2 -->
+                <div class="card scroll-animate">
+                    <div class="card-icon">
+                        <img src="/brain_images/climate_motor_icon_1780336788887.png" alt="Motor Climático Global">
+                    </div>
+                    <div class="card-content">
+                        <span class="step-badge">Passo 2</span>
+                        <h2>Motor Climático Global (NASA POWER API)</h2>
+                        <p>Captura autônoma e dinâmica de dados meteorológicos diários diretamente dos satélites da NASA. Processamento de variáveis críticas de radiação, temperatura média e precipitação acumulada ($V$) com filtros de frequência de chuva ($F_{freq}$) mapeados por safras climáticas (El Niño, La Niña e Neutro).</p>
+                    </div>
+                </div>
+
+                <!-- Passo 3 -->
+                <div class="card scroll-animate">
+                    <div class="card-icon">
+                        <img src="/brain_images/algorithm_icon_1780336813570.png" alt="Algoritmo Epidemiológico Estocástico">
+                    </div>
+                    <div class="card-content">
+                        <span class="step-badge">Passo 3</span>
+                        <h2>Algoritmo Epidemiológico Estocástico (Modelo BR3)</h2>
+                        <p>Aplicação do modelo preditivo empírico de Del Ponte para a Ferrugem Asiática da Soja. Tradução da severidade foliar calculada em equações atuariais de perda de produtividade física (toneladas e sacas/ha) e cálculo do Índice de Vulnerabilidade de Mercado.</p>
+                    </div>
+                </div>
+
+                <!-- Passo 4 -->
+                <div class="card scroll-animate">
+                    <div class="card-icon">
+                        <img src="/brain_images/validation_icon_1780336972214.png" alt="Validação em Tempo Real">
+                    </div>
+                    <div class="card-content">
+                        <span class="step-badge">Passo 4</span>
+                        <h2>Validação em Tempo Real (API SIDRA/IBGE)</h2>
+                        <p>Motor de checagem cruzada que consome a API oficial do SIDRA via requisições temporais iterativas. O algoritmo minera e isola as variáveis reais de produção e área colhida de lavouras temporárias e permanentes diretamente dos servidores do governo para validar estatisticamente as predições do modelo.</p>
+                    </div>
+                </div>
+
+                <!-- Passo 5 -->
+                <div class="card scroll-animate">
+                    <div class="card-icon">
+                        <img src="/brain_images/ml_cluster_icon_1780337749662.png" alt="Análise Avançada & Clusterização">
+                    </div>
+                    <div class="card-content">
+                        <span class="step-badge">Passo 5</span>
+                        <h2>Análise Avançada & Clusterização (Machine Learning)</h2>
+                        <p>Execução do algoritmo de aprendizado não supervisionado K-Means para segmentação automática de municípios em Perfis de Risco (Alto, Moderado, Baixo). Modelagem de regressão linear simples ($lm$) para detecção automática de tendências temporais macroecológicas.</p>
+                    </div>
+                </div>
+
+                <!-- Passo 6 -->
+                <div class="card scroll-animate">
+                    <div class="card-icon">
+                        <img src="/brain_images/dashboard_icon_1780337681848.png" alt="Interface de Decisão">
+                    </div>
+                    <div class="card-content">
+                        <span class="step-badge">Passo 6</span>
+                        <h2>Interface de Decisão (Shiny UI/UX)</h2>
+                        <p>Consolidação dos dados processados em um ecossistema interativo de painéis analíticos (Dashboards). Visualização espacial baseada em mapas temáticos reativos e ferramentas de precificação de seguro agrícola prontas para tomadores de decisão.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>
