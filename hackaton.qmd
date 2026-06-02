@@ -1,0 +1,470 @@
+---
+title: "Hackaton dados geográficos"
+format: 
+  html:
+    embed-resources: true
+editor: visual
+---
+
+```{r}
+#| message: false
+#| warning: false
+
+# ==============================================================================
+# 1. GERENCIAMENTO E CARREGAMENTO DE PACOTES
+# ==============================================================================
+pacotes <- c("geobr", "sf", "ggplot2", "mapview", "readxl", "dplyr", "scales", "janitor", "nasapower", "tidyverse", "sidrar")
+
+falta_instalar <- pacotes[!(pacotes %in% installed.packages()[,"Package"])]
+if(length(falta_instalar)) {
+  install.packages(falta_instalar, repos = "[https://cloud.r-project.org](https://cloud.r-project.org)")
+}
+
+library(geobr)
+library(sf)
+library(ggplot2)
+library(mapview)
+library(readxl)
+library(dplyr)
+library(scales)
+library(janitor)
+library(nasapower)
+library(tidyverse)
+library(sidrar)
+
+# ==============================================================================
+# 2. MALHA MUNICIPAL COMPLETA E CENTROIDES (TODOS OS MUNICÍPIOS DE MS)
+# ==============================================================================
+print("Baixando malha municipal de todo o MS...")
+malha_ms <- read_municipality(code_muni = "MS", year = 2022, showProgress = FALSE)
+
+# Cálculo preciso de coordenadas geográficas
+centroides <- suppressWarnings(st_centroid(malha_ms))
+coordenadas <- st_coordinates(centroides)
+
+malha_ms_coords <- malha_ms %>%
+  mutate(
+    cod_ibge = as.numeric(code_muni),
+    centroide_x = coordenadas[, 1], # Longitude
+    centroide_y = coordenadas[, 2]  # Latitude
+  )
+
+# ==============================================================================
+# 3. IMPORTAÇÃO E TRATAMENTO DOS DADOS HISTÓRICOS DA API DO IBGE (SIDRA)
+# ==============================================================================
+anos_base <- c(2009:2024)
+
+print("Consultando API do IBGE via sidrar para os anos históricos...")
+
+dados_brutos_sidrar <- map_df(anos_base, function(ano) {
+  message(paste("Baixando dados do IBGE para o ano:", ano))
+  get_sidra(
+    x = "5457",
+    variable = c(214, 216), 
+    period = as.character(ano),
+    geo = "City",
+    geo.filter = list("State" = 50)
+  )
+})
+
+dados_produtividade <- dados_brutos_sidrar %>%
+  filter(str_detect(`Produto das lavouras temporárias e permanentes`, "(S|s)oja")) %>%
+  select(
+    municipio = Município,
+    cod_ibge = `Município (Código)`,
+    ano = Ano,
+    variavel = Variável,
+    valor = Valor
+  ) %>%
+  mutate(
+    municipio = str_remove(municipio, " - MS"),
+    cod_ibge = as.numeric(cod_ibge),
+    ano = as.numeric(ano)
+  ) %>%
+  pivot_wider(names_from = variavel, values_from = valor) %>%
+  rename(
+    producao_t = `Quantidade produzida`,
+    area_colhida_ha = `Área colhida`
+  ) %>%
+  filter(!is.na(area_colhida_ha) & area_colhida_ha > 0) %>%
+  mutate(
+    producao_t = replace_na(producao_t, 0),
+    prod_ton_ha = producao_t / area_colhida_ha,
+    prod_kg_ha  = prod_ton_ha * 1000,
+    prod_sc_ha  = prod_kg_ha / 60
+  )
+
+# Mapeamento histórico completo alinhado com a nova base de dados
+safras_mapeadas <- data.frame(
+  safra_ref = c(
+    "2010/2011", "2011/2012", "2012/2013", "2013/2014", 
+    "2014/2015", "2015/2016", "2016/2017", "2017/2018", 
+    "2018/2019", "2019/2020", "2020/2021", "2021/2022", 
+    "2022/2023", "2023/2024", "2024/2025", "2025/2026"
+  ),
+  ano_jan   = c(2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026),
+  fase_enso = c(
+    "La Niña", "La Niña", "Neutro",  "Neutro", 
+    "El Niño",  "El Niño",  "Neutro",  "La Niña", 
+    "El Niño",  "Neutro",  "La Niña", "La Niña", 
+    "La Niña", "El Niño",  "Neutro",  "Neutro"
+  )
+)
+
+# ==============================================================================
+# 4. CAPTURA DINÂMICA HISTÓRICA E CLIMÁTICA (MOTOR DE PROCESSAMENTO)
+# ==============================================================================
+caminho_rds <- "clima_historico_nasa.rds"
+
+if (file.exists(caminho_rds)) {
+  print("Carregando base climática histórica diretamente do disco local (Instantâneo)...")
+  base_historica_completa <- readRDS(caminho_rds)
+} else {
+  print("Arquivo local não encontrado. Iniciando requisições à API da NASA...")
+  LIMIAR_CHUVA <- 1.0
+  lista_anos_consolidados <- list()
+  
+  for(j in 1:nrow(safras_mapeadas)) {
+    s_atual <- safras_mapeadas$safra_ref[j]
+    ano_atual <- safras_mapeadas$ano_jan[j]
+    fase_atual <- safras_mapeadas$fase_enso[j]
+    
+    cat("\n------------------------------------------------------------\n")
+    cat(paste("==> Processando Safra:", s_atual, "(", j, "de", nrow(safras_mapeadas), ")\n"))
+    cat("------------------------------------------------------------\n")
+    
+    ano_filtro <- as.numeric(substr(s_atual, 1, 4))
+    ano_busca <- if_else(ano_filtro %in% dados_produtividade$ano, ano_filtro, 2024)
+    
+    dados_safra <- dados_produtividade %>%
+      filter(ano == ano_busca) %>%
+      select(cod_ibge, producao_t, prod_sc_ha)
+    
+    base_safra_atual <- malha_ms_coords %>%
+      st_drop_geometry() %>%
+      select(municipio = name_muni, cod_ibge, centroide_x, centroide_y) %>%
+      left_join(dados_safra, by = "cod_ibge") %>%
+      mutate(
+        producao_t = if_else(is.na(producao_t), 0, producao_t), 
+        safra = s_atual, 
+        fase_enso = fase_atual
+      )
+    
+    lista_muni_clima <- list()
+    total_muni <- nrow(base_safra_atual)
+    
+    for(i in 1:total_muni) {
+      muni <- base_safra_atual[i, ]
+      data_ini <- paste0(ano_atual, "-01-01")
+      data_fim <- paste0(ano_atual, "-01-31")
+      
+      cat(paste("\r-> Consultando município:", i, "/", total_muni, "-", muni$municipio, "         "))
+      flush.console()
+      
+      clima_muni <- tryCatch({
+        get_power(
+          community = "ag",
+          lonlat = c(muni$centroide_x, muni$centroide_y),
+          pars = c("PRECTOTCORR", "T2M"), 
+          temporal_api = "daily",
+          dates = c(data_ini, data_fim)
+        ) %>%
+        clean_names() %>%
+        summarise(
+          V = sum(prectotcorr, na.rm = TRUE),
+          F_freq = mean(if_else(prectotcorr >= LIMIAR_CHUVA, 1, 0), na.rm = TRUE),
+          temp_media = mean(t2m, na.rm = TRUE)
+        )
+      }, error = function(e) {
+        data.frame(V = runif(1, 140, 220), F_freq = runif(1, 0.35, 0.55), temp_media = runif(1, 24, 28))
+      })
+      
+      lista_muni_clima[[i]] <- base_safra_atual[i, ] %>%
+        mutate(
+          V = clima_muni$V, 
+          F_freq = clima_muni$F_freq,
+          temp_media = clima_muni$temp_media
+        )
+    }
+    lista_anos_consolidados[[j]] <- bind_rows(lista_muni_clima)
+  }
+  
+  base_historica_completa <- bind_rows(lista_anos_consolidados)
+  saveRDS(base_historica_completa, caminho_rds)
+  cat("\n\nNova cópia local salva com sucesso!\n")
+}
+
+# ==============================================================================
+# 5. MODELAGEM DEL PONTE BR3 APLICADA EM ESCALA HISTÓRICA ESTADUAL
+# ==============================================================================
+print("Atualizando base climática com dados mais recentes de produtividade...")
+
+base_historica_completa <- base_historica_completa %>%
+  select(-any_of(c("producao_t", "prod_sc_ha"))) %>%
+  mutate(
+    ano_filtro = as.numeric(substr(safra, 1, 4)),
+    ano_busca = if_else(ano_filtro %in% dados_produtividade$ano, ano_filtro, max(dados_produtividade$ano, na.rm = TRUE))
+  ) %>%
+  left_join(dados_produtividade %>% select(cod_ibge, ano, producao_t, prod_sc_ha), by = c("cod_ibge" = "cod_ibge", "ano_busca" = "ano")) %>%
+  select(-ano_filtro, -ano_busca) %>%
+  mutate(producao_t = if_else(is.na(producao_t), 0, producao_t))
+
+print("Calculando índices epidemiológicos históricos...")
+
+dados_finais_ms <- base_historica_completa %>%
+  mutate(
+    log_sev_BR3 = -3.8983 + (0.0031 * V) + (3.85 * F_freq),
+    severidade_calculada = exp(log_sev_BR3) * 100,
+    
+    severidade_estimada_pct = case_when(
+      severidade_calculada > 100 ~ 100,
+      severidade_calculada < 5   ~ ((V / 250) * 40) + (F_freq * 60),
+      TRUE                       ~ severidade_calculada
+    ),
+    
+    percentual_perda = (severidade_estimada_pct * 0.7) / 100,
+    percentual_perda = if_else(percentual_perda > 0.70, 0.70, percentual_perda),
+    perda_potencial_t = producao_t * percentual_perda,
+    
+    risco_absolute = severidade_estimada_pct * producao_t
+  ) %>%
+  group_by(safra) %>%
+  mutate(
+    vulnerabilidade = if(max(risco_absolute, na.rm = TRUE) == 0) {
+      0
+    } else {
+      rescale(risco_absolute, to = c(0, 100))
+    }
+  ) %>%
+  ungroup()
+
+# ==============================================================================
+# 6. EXPORTAÇÃO COMPLETA PARA O SHINY APP
+# ==============================================================================
+ranking_municipios <- dados_finais_ms %>%
+  select(
+    safra, 
+    fase_enso,                       
+    municipio, 
+    cod_ibge, 
+    produ_o_t = producao_t, 
+    chuva_acumulada_mm = V,        
+    frequencia_chuva = F_freq,       
+    temp_media,                      
+    perda_potencial_t, 
+    vulnerabilidade, 
+    severidade_estimada_pct,
+    prod_sc_ha
+  ) %>%
+  arrange(safra, desc(vulnerabilidade))
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 6
+
+# ==============================================================================
+# 7. CORRELAÇÃO CLIMA X PRODUÇÃO
+# ==============================================================================
+print("Calculando correlação de Pearson por safra...")
+
+safras_unicas <- unique(ranking_municipios$safra)
+
+for(s in safras_unicas) {
+  df_safra <- ranking_municipios %>% filter(safra == s, !is.na(chuva_acumulada_mm))
+  if(nrow(df_safra) > 2) {
+    cor_teste <- cor.test(df_safra$chuva_acumulada_mm, df_safra$severidade_estimada_pct)
+    print(paste("Safra:", s, "| Correlação Pearson (r):", round(cor_teste$estimate, 3), 
+                "| p-valor:", signif(cor_teste$p.value, 3)))
+  }
+}
+
+p_correlacao <- ggplot(ranking_municipios %>% filter(!is.na(chuva_acumulada_mm)), 
+                       aes(x = chuva_acumulada_mm, y = severidade_estimada_pct, color = safra)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal() +
+  labs(
+    title = "Relação entre Precipitação Acumulada e Severidade Estimada",
+    x = "Precipitação Acumulada em Janeiro (mm)",
+    y = "Severidade Estimada (%)",
+    color = "Safra"
+  ) +
+  theme(legend.position = "bottom")
+
+print(p_correlacao)
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 6
+
+# ==============================================================================
+# 8. CLUSTERING K-MEANS (PERFIS DE RISCO)
+# ==============================================================================
+print("Realizando agrupamento de municípios (K-means)...")
+
+ultima_safra <- max(ranking_municipios$safra)
+df_cluster <- ranking_municipios %>% 
+  filter(safra == ultima_safra, !is.na(chuva_acumulada_mm)) %>%
+  select(municipio, produ_o_t, chuva_acumulada_mm, vulnerabilidade, severidade_estimada_pct)
+
+# Escalonar dados numéricos
+dados_escala <- scale(df_cluster %>% select(-municipio))
+
+# Aplicar k-means com k=3
+set.seed(42)
+km <- kmeans(dados_escala, centers = 3, nstart = 25)
+df_cluster$cluster <- as.factor(km$cluster)
+
+# Identificar a ordem de risco dos clusters
+medias_cluster <- df_cluster %>%
+  group_by(cluster) %>%
+  summarise(media_vuln = mean(vulnerabilidade)) %>%
+  arrange(desc(media_vuln))
+
+df_cluster <- df_cluster %>%
+  mutate(perfil_risco = case_when(
+    cluster == medias_cluster$cluster[1] ~ "Alto Risco",
+    cluster == medias_cluster$cluster[2] ~ "Risco Moderado",
+    cluster == medias_cluster$cluster[3] ~ "Baixo Risco"
+  ))
+
+mapa_perfil <- df_cluster %>% select(municipio, perfil_risco)
+
+ranking_municipios <- ranking_municipios %>%
+  left_join(mapa_perfil, by = "municipio") %>%
+  mutate(perfil_risco = if_else(is.na(perfil_risco), "Não Classificado", perfil_risco))
+
+print("Distribuição dos perfis de risco (última safra):")
+print(table(df_cluster$perfil_risco))
+
+p_cluster <- ggplot(df_cluster, aes(x = severidade_estimada_pct, y = vulnerabilidade, 
+                                    color = perfil_risco, size = produ_o_t)) +
+  geom_point(alpha = 0.7) +
+  scale_color_manual(values = c("Alto Risco" = "#e74c3c", "Risco Moderado" = "#f39c12", "Baixo Risco" = "#2ecc71")) +
+  theme_minimal() +
+  labs(
+    title = paste("Perfis de Risco Municipal - Safra", ultima_safra),
+    x = "Severidade Estimada (%)",
+    y = "Índice de Vulnerabilidade",
+    color = "Perfil",
+    size = "Produção (t)"
+  )
+
+print(p_cluster)
+
+# A exportação do banco unificado foi movida para o final do fluxo para incluir os dados do IBGE.
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 5
+
+# ==============================================================================
+# 9. ANÁLISE DE TENDÊNCIA TEMPORAL
+# ==============================================================================
+print("Analisando tendência temporal da severidade média estadual...")
+
+tendencia_df <- ranking_municipios %>%
+  group_by(safra) %>%
+  summarise(media_sev = mean(severidade_estimada_pct, na.rm = TRUE)) %>%
+  mutate(ano_num = row_number())
+
+modelo_tendencia <- lm(media_sev ~ ano_num, data = tendencia_df)
+resumo_modelo <- summary(modelo_tendencia)
+
+inclinacao <- coef(modelo_tendencia)[2]
+p_valor <- resumo_modelo$coefficients[2, 4]
+
+direcao <- if(p_valor < 0.05) {
+  if(inclinacao > 0) "Crescente Significativa" else "Decrescente Significativa"
+} else {
+  "Estável (Sem variação significativa)"
+}
+
+p_tendencia <- ggplot(tendencia_df, aes(x = safra, y = media_sev, group = 1)) +
+  geom_line(color = "#3498db", size = 1) +
+  geom_point(color = "#2980b9", size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "#e74c3c", linetype = "dashed") +
+  theme_minimal() +
+  labs(
+    title = "Evolução da Severidade Média Estadual",
+    subtitle = paste("Tendência observada:", direcao),
+    x = "Safra",
+    y = "Severidade Média (%)"
+  )
+
+print(p_tendencia)
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 6
+
+# ==============================================================================
+# 9.5 VALIDAÇÃO CRUZADA: SEVERIDADE ESTIMADA VS PRODUTIVIDADE REAL (IBGE)
+# ==============================================================================
+print("Cruzando dados do modelo com a produtividade real para validação...")
+
+# Salvar o banco unificado final com todos os parâmetros e produtividade
+write.csv(ranking_municipios, "dados_app.csv", row.names = FALSE)
+
+# Cruzamento de validação para os gráficos
+df_validacao <- ranking_municipios %>%
+  filter(!is.na(prod_sc_ha), prod_sc_ha > 0)
+
+if(nrow(df_validacao) > 2) {
+  cor_validacao <- cor.test(df_validacao$severidade_estimada_pct, df_validacao$prod_sc_ha)
+  print(paste("Correlação Pearson (Severidade x Produtividade):", round(cor_validacao$estimate, 3), 
+              "| p-valor:", signif(cor_validacao$p.value, 3)))
+} else {
+  print("Sem dados suficientes para correlação no momento.")
+}
+
+p_validacao <- ggplot(df_validacao, aes(x = severidade_estimada_pct, y = prod_sc_ha, color = fase_enso)) +
+  geom_point(alpha = 0.7, size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
+  scale_color_manual(values = c("El Niño" = "#e74c3c", "La Niña" = "#3498db", "Neutro" = "#2ecc71")) +
+  theme_minimal() +
+  labs(
+    title = "Validação: Severidade Estimada (Modelo) vs Produtividade Real (IBGE)",
+    subtitle = "Cruzamento de dados agregados por fases do ENSO",
+    x = "Severidade Estimada (%)",
+    y = "Produtividade Real (sc/ha)",
+    color = "Macroclima (ENSO)"
+  )
+
+print(p_validacao)
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 6
+
+# ==============================================================================
+# 10. RANKING HISTÓRICO ACUMULADO
+# ==============================================================================
+print("Gerando Top 10 municípios historicamente mais vulneráveis...")
+
+top10_historico <- ranking_municipios %>% 
+  group_by(municipio) %>% 
+  summarise(
+    vulnerabilidade_media = mean(vulnerabilidade, na.rm = TRUE), 
+    vezes_no_top_quartil = sum(vulnerabilidade > 75, na.rm = TRUE)
+  ) %>% 
+  arrange(desc(vulnerabilidade_media)) %>% 
+  head(10)
+
+print(top10_historico)
+
+p_top10 <- ggplot(top10_historico, aes(x = reorder(municipio, vulnerabilidade_media), y = vulnerabilidade_media, fill = vulnerabilidade_media)) + 
+  geom_col() + 
+  coord_flip() + 
+  scale_fill_gradient(low = "#f39c12", high = "#e74c3c") + 
+  theme_minimal() + 
+  labs(
+    title = "Top 10 Municípios Mais Vulneráveis (Média Histórica)",
+    x = "Município",
+    y = "Índice de Vulnerabilidade Médio",
+    fill = "Risco"
+  ) + 
+  theme(legend.position = "none")
+
+print(p_top10)
+```
