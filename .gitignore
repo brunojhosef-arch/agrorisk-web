@@ -1,0 +1,28 @@
+# R history and workspace files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Shinyapps / RSConnect deployment directories
+# Ignorado para evitar vazamento de credenciais ou tokens de publicação
+rsconnect/
+
+# Arquivos pesados gerados localmente 
+# (Descomente se não quiser enviar arquivos grandes como PDFs, relatórios renderizados etc.)
+# *.pdf
+# *hackaton.html
+# *hackaton_files/
+# Relatorio-hackaton_files/
+# Relatorio hackaton_files/
+
+# Dependendo de como você quer portfólio, os dados (csv, rds, xlsx) 
+# podem subir para o github se forem leves (< 50MB). 
+# Caso queira ignorá-los por segurança/tamanho, descomente as linhas abaixo:
+# *.rds
+# *.csv
+# *.xlsx
+
+# OS generated files
+.DS_Store
+Thumbs.db
