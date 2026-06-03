@@ -1,0 +1,327 @@
+---
+title: "Relatório Comparativo Histórico — AgroRisk MS"
+author: "Sistema de Inteligência Atuarial"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: false
+    self_contained: true
+  pdf_document:
+    latex_engine: xelatex
+params:
+  safras:   !r c("2022/2023", "2023/2024", "2024/2025")
+  municipio: "Todos"
+  dados:    NA
+  malha:    NA
+---
+
+```{r css-style, echo=FALSE, results='asis'}
+if (knitr::is_html_output()) {
+  cat('
+<style>
+body {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #2C3E50;
+  background-color: #f0f5eb;
+  margin: 0; padding: 0;
+}
+#TOC, .tocify, .tocify-wrapper, .col-md-3, .list-group { display: none !important; }
+.col-md-9, .col-sm-9 {
+  width: 100% !important; max-width: 100% !important;
+  flex: 0 0 100% !important; margin-left: 0 !important;
+}
+.main-container {
+  max-width: 980px !important; margin: 40px auto !important;
+  background-color: rgba(255,255,255,0.97) !important;
+  padding: 40px 50px !important; border-radius: 14px !important;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.12) !important;
+}
+.container-fluid {
+  max-width: 1000px !important; margin: 0 auto !important;
+  padding: 20px 30px !important;
+}
+.safra-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #1B5E20, #558b2f);
+  color: white; padding: 4px 12px; border-radius: 20px;
+  font-size: 13px; font-weight: 700; margin: 3px;
+}
+.value-box-container {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 15px; margin-bottom: 25px;
+}
+.value-box {
+  background: linear-gradient(135deg, #1B5E20 0%, #2ecc71 100%);
+  color: white; padding: 18px; border-radius: 10px;
+  text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  border-bottom: 4px solid rgba(0,0,0,0.1);
+}
+.value-box.danger  { background: linear-gradient(135deg, #B71C1C 0%, #e74c3c 100%); }
+.value-box.warning { background: linear-gradient(135deg, #E65100 0%, #FBC02D 100%); }
+.value-box.info    { background: linear-gradient(135deg, #0d47a1 0%, #3498db 100%); }
+.value-box.neutral { background: linear-gradient(135deg, #37474F 0%, #78909C 100%); }
+.value-box h4 { margin-top:0; font-size:12px; text-transform:uppercase; letter-spacing:1px; font-weight:800; opacity:0.9; }
+.value-box h2 { margin:8px 0 0; font-size:22px; font-weight:900; }
+.value-box p  { margin:4px 0 0; font-size:11px; opacity:0.8; }
+h1, h2, h3 { color: #1B5E20; font-weight: 700; }
+hr { border-top: 2px solid #FBC02D; margin: 30px 0; }
+img, .plotly { max-width: 100% !important; height: auto !important; }
+</style>
+')
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(knitr)
+library(plotly)
+library(DT)
+library(scales)
+library(tidyr)
+
+df        <- params$dados
+safras    <- sort(params$safras)   # ordem cronológica
+municipio <- params$municipio
+malha_ms  <- params$malha
+filtro_muni <- municipio != "Todos"
+
+# Resumo por safra
+resumo_safra <- df %>%
+  group_by(safra) %>%
+  summarise(
+    vuln_media      = mean(vulnerabilidade,      na.rm = TRUE),
+    chuva_media     = mean(chuva_acumulada_mm,   na.rm = TRUE),
+    sev_media       = mean(severidade_estimada_pct, na.rm = TRUE),
+    perda_total_t   = sum(perda_potencial_t,     na.rm = TRUE),
+    producao_total  = sum(producao_t,            na.rm = TRUE),
+    fase_enso       = first(fase_enso),
+    .groups = "drop"
+  ) %>%
+  arrange(safra)
+
+safra_maior_risco <- resumo_safra %>% slice_max(vuln_media, n = 1) %>% pull(safra)
+safra_menor_risco <- resumo_safra %>% slice_min(vuln_media, n = 1) %>% pull(safra)
+delta_vuln        <- max(resumo_safra$vuln_media) - min(resumo_safra$vuln_media)
+titulo_contexto   <- if (filtro_muni) paste("—", municipio) else "— Estado do MS"
+```
+
+---
+
+# Relatorio Comparativo `r titulo_contexto`
+
+**Safras analisadas:**
+```{r badges, results='asis'}
+if (knitr::is_html_output()) {
+  cat(paste0('<span class="safra-badge">', safras, '</span>', collapse = " "))
+} else {
+  cat(paste0("**", safras, "**", collapse = ", "))
+}
+```
+
+---
+
+## 1. Síntese Comparativa — Indicadores por Safra
+
+```{r resumo-boxes, results='asis'}
+if (knitr::is_html_output()) {
+  cat('<div class="value-box-container">')
+  cat(paste0('<div class="value-box danger"><h4>Safra de Maior Risco</h4><h2>', safra_maior_risco, '</h2>',
+             '<p>Vuln. media: ', round(max(resumo_safra$vuln_media), 1), '</p></div>'))
+  cat(paste0('<div class="value-box info"><h4>Safra de Menor Risco</h4><h2>', safra_menor_risco, '</h2>',
+             '<p>Vuln. media: ', round(min(resumo_safra$vuln_media), 1), '</p></div>'))
+  cat(paste0('<div class="value-box warning"><h4>Amplitude de Risco</h4><h2>', round(delta_vuln, 1), ' pts</h2>',
+             '<p>Variacao entre safras</p></div>'))
+  cat(paste0('<div class="value-box neutral"><h4>Safras Comparadas</h4><h2>', length(safras), '</h2>',
+             '<p>Periodo analisado</p></div>'))
+  cat('</div>')
+} else {
+  cat("\n")
+  cat("- **Safra de Maior Risco:** ", safra_maior_risco, " (Vuln. média: ", round(max(resumo_safra$vuln_media), 1), ")\n")
+  cat("- **Safra de Menor Risco:** ", safra_menor_risco, " (Vuln. média: ", round(min(resumo_safra$vuln_media), 1), ")\n")
+  cat("- **Amplitude de Risco:** ", round(delta_vuln, 1), " pts\n")
+  cat("- **Safras Comparadas:** ", length(safras), " safras\n")
+  cat("\n")
+}
+```
+
+---
+
+## 2. Evolução da Vulnerabilidade ao Longo do Tempo
+
+```{r evolucao-vuln, fig.width=10, fig.height=5}
+p_evo <- ggplot(resumo_safra, aes(x = safra, y = vuln_media, group = 1,
+                 text = paste0("Safra: ", safra,
+                               "<br>Vuln. Média: ", round(vuln_media, 1),
+                               "<br>Fase ENSO: ", fase_enso))) +
+  geom_area(fill = "#1B5E20", alpha = 0.12) +
+  geom_line(color = "#1B5E20", size = 1.5) +
+  geom_point(aes(color = fase_enso), size = 5) +
+  geom_label(aes(label = round(vuln_media, 1)), vjust = -0.8, size = 3.5,
+             fontface = "bold", fill = "white", color = "#1B5E20", label.size = 0.3) +
+  geom_hline(yintercept = 60, linetype = "dashed", color = "#B71C1C", alpha = 0.5) +
+  geom_hline(yintercept = 35, linetype = "dashed", color = "#FBC02D", alpha = 0.5) +
+  scale_color_manual(
+    values = c("El Niño" = "#b71c1c", "La Niña" = "#0d47a1", "Neutro" = "#558b2f"),
+    name = "Fase ENSO"
+  ) +
+  scale_y_continuous(limits = c(0, max(resumo_safra$vuln_media) * 1.25)) +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom") +
+  labs(title = "Trajetória do Índice de Vulnerabilidade Médio por Safra",
+       subtitle = "Linha tracejada: zonas crítica (≥60) e de alerta (≥35)",
+       x = "Safra Agrícola", y = "Vulnerabilidade Média (0–100)")
+
+if (knitr::is_html_output()) {
+  ggplotly(p_evo, tooltip = "text") %>%
+    layout(legend = list(orientation = "h", y = -0.25))
+} else {
+  p_evo
+}
+```
+
+---
+
+## 3. Comparativo de Precipitação e Severidade por Safra
+
+```{r precip-sev, fig.width=10, fig.height=5}
+resumo_long <- resumo_safra %>%
+  select(safra, `Chuva (mm)` = chuva_media, `Severidade (%)` = sev_media) %>%
+  pivot_longer(-safra, names_to = "Indicador", values_to = "Valor")
+
+p_comp <- ggplot(resumo_long, aes(x = safra, y = Valor, fill = safra,
+                  text = paste0("Safra: ", safra, "<br>", Indicador, ": ", round(Valor, 1)))) +
+  geom_col(width = 0.65, show.legend = FALSE) +
+  facet_wrap(~Indicador, scales = "free_y", ncol = 2) +
+  scale_fill_viridis_d(option = "D", begin = 0.2, end = 0.85) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x   = element_text(angle = 45, hjust = 1),
+        strip.text     = element_text(face = "bold", size = 13),
+        strip.background = element_rect(fill = "#f5f5f5", color = "#ddd"),
+        panel.grid.minor = element_blank()) +
+  labs(title = "Precipitação Média e Severidade Média por Safra",
+       x = "Safra Agrícola", y = "")
+
+if (knitr::is_html_output()) {
+  ggplotly(p_comp, tooltip = "text")
+} else {
+  p_comp
+}
+```
+
+---
+
+## 4. Heatmap de Vulnerabilidade — Municípios × Safras
+
+```{r heatmap, fig.width=11, fig.height=7}
+# Seleciona os top 15 municípios com maior vulnerabilidade média no período
+top_munis <- df %>%
+  group_by(municipio) %>%
+  summarise(vm = mean(vulnerabilidade, na.rm = TRUE), .groups = "drop") %>%
+  slice_max(vm, n = 15) %>%
+  pull(municipio)
+
+df_heat <- df %>% filter(municipio %in% top_munis)
+
+p_heat <- ggplot(df_heat, aes(x = safra, y = reorder(municipio, vulnerabilidade),
+                               fill = vulnerabilidade,
+                               text = paste0(municipio, "<br>Safra: ", safra,
+                                             "<br>Vulnerabilidade: ", round(vulnerabilidade, 1)))) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_gradientn(
+    colors = c("#2ecc71", "#f1c40f", "#e67e22", "#c0392b"),
+    limits = c(0, 100), name = "Risco"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x    = element_text(angle = 45, hjust = 1),
+        axis.text.y    = element_text(size = 11),
+        panel.grid     = element_blank(),
+        legend.position = "right") +
+  labs(title = "Heatmap: Evolução da Vulnerabilidade (Top 15 Municípios)",
+       x = "Safra Agrícola", y = "")
+
+if (knitr::is_html_output()) {
+  ggplotly(p_heat, tooltip = "text")
+} else {
+  p_heat
+}
+```
+
+---
+
+## 5. Ranking Consolidado por Safra
+
+```{r ranking-tabela}
+tabela_resumo <- resumo_safra %>%
+  mutate(
+    `Safra`              = safra,
+    `Fase ENSO`          = fase_enso,
+    `Vuln. Média`        = round(vuln_media, 1),
+    `Chuva Média (mm)`   = round(chuva_media, 1),
+    `Severidade Média (%)` = round(sev_media, 1),
+    `Perda Total Est. (t)` = scales::comma(round(perda_total_t, 0), big.mark = ".", decimal.mark = ","),
+    `Nível de Risco`     = if_else(vuln_media > 60, "ALTO",
+                            if_else(vuln_media > 35, "MODERADO", "BAIXO"))
+  ) %>%
+  select(`Safra`, `Fase ENSO`, `Nível de Risco`, `Vuln. Média`,
+         `Chuva Média (mm)`, `Severidade Média (%)`, `Perda Total Est. (t)`) %>%
+  arrange(desc(`Vuln. Média`))
+
+if (knitr::is_html_output()) {
+  datatable(
+    tabela_resumo,
+    options  = list(pageLength = 10, dom = 't', ordering = TRUE),
+    rownames = FALSE,
+    class    = "stripe hover"
+  )
+} else {
+  kable(tabela_resumo, align = "c")
+}
+```
+
+---
+
+## 6. Conclusão Automática e Diretrizes Estratégicas
+
+```{r conclusao, results='asis'}
+cat("### Diagnostico do Periodo Analisado\n\n")
+
+cat("A análise comparativa das safras **", paste(safras, collapse = ", "),
+    "** revela uma amplitude de risco de **", round(delta_vuln, 1),
+    " pontos** no índice de vulnerabilidade atuarial",
+    if (filtro_muni) paste0(" para o município de **", municipio, "**") else " ao nível estadual",
+    ".\n\n", sep = "")
+
+cat("- **Safra de maior exposição:** **", safra_maior_risco, "** — índice médio de **",
+    round(max(resumo_safra$vuln_media), 1), "/100**\n\n", sep = "")
+
+cat("- **Safra de menor exposição:** **", safra_menor_risco, "** — índice médio de **",
+    round(min(resumo_safra$vuln_media), 1), "/100**\n\n", sep = "")
+
+# Verifica tendência
+if (nrow(resumo_safra) >= 3) {
+  lm_fit  <- lm(vuln_media ~ seq_along(safra), data = resumo_safra)
+  slope   <- coef(lm_fit)[2]
+  p_valor <- summary(lm_fit)$coefficients[2, 4]
+
+  cat("#### Tendência Estatística\n\n")
+  if (p_valor < 0.05) {
+    if (slope > 0) {
+      cat("> A regressão linear sobre o período indica uma **tendência de aumento** estatisticamente significativa (p < 0.05) na vulnerabilidade da ferrugem. A pressão sanitária está em **expansão** na região. Recomenda-se escalonamento gradual das medidas de monitoramento fitossanitário.\n\n")
+    } else {
+      cat("> A regressão linear indica uma **tendência de redução** estatisticamente significativa (p < 0.05) na vulnerabilidade. A pressão sanitária está em **contração** — cenário favorável para políticas de seguro mais agressivas.\n\n")
+    }
+  } else {
+    cat("> A regressão linear não detecta tendência estatisticamente significativa (p = ",
+        round(p_valor, 3), "). A vulnerabilidade oscila **sem padrão direcional claro** no período analisado — safras individuais devem ser avaliadas isoladamente para precificação de risco.\n\n", sep = "")
+  }
+}
+
+cat("---\n\n")
+cat("*Relatório gerado automaticamente pelo sistema AgroRisk MS — FIP 606*\n")
+```

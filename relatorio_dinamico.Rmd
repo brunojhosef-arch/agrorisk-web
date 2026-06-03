@@ -1,0 +1,435 @@
+---
+title: "Relatório Executivo AgroRisk MS"
+author: "Sistema de Inteligência Atuarial"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+output: 
+  html_document:
+    theme: flatly
+    toc: false
+    self_contained: true
+  pdf_document:
+    latex_engine: xelatex
+params:
+  safra: "2024/2025"
+  variaveis: !r c("Precipitação", "Temperatura", "Produtividade", "Severidade")
+  dados: NA
+  malha: NA
+  municipio: "Todos"
+  dados_hist: NA
+---
+
+```{r css-style, echo=FALSE, results='asis'}
+if (knitr::is_html_output()) {
+  cat('
+<style>
+body {
+  margin: 0; padding: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #2C3E50;
+  background-color: #f0f5eb;
+}
+#TOC, .tocify, .tocify-wrapper, .col-md-3, .list-group {
+  display: none !important; width: 0 !important;
+}
+.col-md-9, .col-sm-9 {
+  width: 100% !important; max-width: 100% !important;
+  flex: 0 0 100% !important; margin-left: 0 !important;
+}
+.main-container {
+  max-width: 960px !important; margin: 40px auto !important;
+  background-color: rgba(255,255,255,0.97) !important;
+  padding: 40px 50px !important; border-radius: 14px !important;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.12) !important;
+  box-sizing: border-box;
+}
+.container-fluid {
+  max-width: 980px !important; margin: 0 auto !important;
+  padding: 20px 30px !important;
+}
+.value-box-container {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr));
+  gap: 15px; margin-bottom: 25px;
+}
+.value-box {
+  flex: 1; min-width: 200px;
+  background: linear-gradient(135deg, #1B5E20 0%, #2ecc71 100%);
+  color: white; padding: 20px; border-radius: 10px;
+  text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  border-bottom: 4px solid rgba(0,0,0,0.1);
+}
+.value-box.danger  { background: linear-gradient(135deg, #B71C1C 0%, #e74c3c 100%); }
+.value-box.warning { background: linear-gradient(135deg, #FBC02D 0%, #f1c40f 100%); color:#2C3E50; }
+.value-box.info    { background: linear-gradient(135deg, #0d47a1 0%, #3498db 100%); }
+.value-box h4 { margin-top:0; font-size:13px; text-transform:uppercase; letter-spacing:1px; font-weight:800; opacity:0.9; color: inherit; }
+.value-box h2 { margin:10px 0 0; font-size:26px; font-weight:900; color: inherit; }
+h1, h2, h3 { color:#1B5E20; font-weight:700; }
+hr { border-top:2px solid #FBC02D; margin: 30px 0; }
+img, .plotly { max-width:100% !important; height:auto !important; }
+</style>
+')
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(knitr)
+library(plotly)
+library(leaflet)
+library(DT)
+library(scales)
+
+# Carrega os parâmetros
+safra       <- params$safra
+vars        <- params$variaveis
+malha_ms    <- params$malha
+municipio   <- params$municipio
+dados_hist  <- params$dados_hist
+filtro_muni <- municipio != "Todos"
+
+# Filtra dados pelo município se selecionado
+df <- params$dados
+if (filtro_muni) {
+  df <- df %>% filter(municipio == params$municipio)
+}
+
+# Dados históricos do município (para o gráfico substituto do mapa)
+if (filtro_muni && !all(is.na(dados_hist))) {
+  df_hist_muni <- dados_hist %>%
+    filter(municipio == params$municipio) %>%
+    arrange(safra)
+} else {
+  df_hist_muni <- NULL
+}
+
+# Variáveis derivadas para análise explicativa
+fase_macro        <- unique(df$fase_enso)[1]
+vuln_media        <- mean(df$vulnerabilidade, na.rm = TRUE)
+chuva_media       <- mean(df$chuva_acumulada_mm, na.rm = TRUE)
+nivel_risco_geral <- if_else(vuln_media > 60, "ALTO", if_else(vuln_media > 35, "MODERADO", "BAIXO"))
+subtitulo         <- if (filtro_muni) paste("— Município:", municipio) else "— Estado do MS"
+```
+
+---
+
+# Relatorio Executivo -- Safra `r safra` `r subtitulo`
+
+---
+
+## 1. Diagnóstico Macroclimático
+
+```{r diagnostico-texto, results='asis'}
+cat("Durante a safra **", safra, "**, o macroclima global esteve sob influência do fenômeno **", fase_macro, "**.\n\n", sep = "")
+
+if (knitr::is_html_output()) {
+  if (fase_macro == "El Niño") {
+    cat("> &#128313; **Nota Técnica:** Historicamente, anos de El Niño aumentam a probabilidade de precipitações recorrentes em janeiro na região centro-sul do MS. Esse excesso de umidade na janela crítica reprodutiva funciona como um catalisador para o progresso exponencial do fungo da ferrugem asiática.\n\n")
+  } else if (fase_macro == "La Niña") {
+    cat("> &#128313; **Nota Técnica:** O cenário de La Niña geralmente traz maior irregularidade hídrica ou estiagens no sul do MS em janeiro. Embora a seca cause perda de produtividade fisiológica, o ambiente menos úmido tende a frear o avanço epidêmico severo da ferrugem.\n\n")
+  } else {
+    cat("> &#128313; **Nota Técnica:** O cenário Neutro traz condições climáticas sem fortes anomalias oceânicas. A atenção deve estar voltada para bolsões locais de umidade (microclimas) que favoreçam a esporulação foliar.\n\n")
+  }
+
+  cat("O índice médio de vulnerabilidade estadual fechou em **", round(vuln_media, 1), "/100**, classificando esta safra como um cenário de **RISCO ", nivel_risco_geral, "** sistêmico.\n\n", sep = "")
+
+  if (nivel_risco_geral == "ALTO") {
+    cat("> &#9888; **Atenção (Subscrição de Seguro):** Recomenda-se rigor máximo nas apólices desta safra e exigência de comprovação de aplicações de fungicidas preventivos nos polos agrícolas críticos.\n\n")
+  } else {
+    cat("> &#9989; **Operação Padrão:** As apólices podem operar sob monitoramento fitossanitário padrão e eventuais bônus/descontos em áreas de menor exposição.\n\n")
+  }
+} else {
+  if (fase_macro == "El Niño") {
+    cat("> **Nota Técnica:** Historicamente, anos de El Niño aumentam a probabilidade de precipitações recorrentes em janeiro na região centro-sul do MS. Esse excesso de umidade na janela crítica reprodutiva funciona como um catalisador para o progresso exponencial do fungo da ferrugem asiática.\n\n")
+  } else if (fase_macro == "La Niña") {
+    cat("> **Nota Técnica:** O cenário de La Niña geralmente traz maior irregularidade hídrica ou estiagens no sul do MS em janeiro. Embora a seca cause perda de produtividade fisiológica, o ambiente menos úmido tende a frear o avanço epidêmico severo da ferrugem.\n\n")
+  } else {
+    cat("> **Nota Técnica:** O cenário Neutro traz condições climáticas sem fortes anomalias oceânicas. A atenção deve estar voltada para bolsões locais de umidade (microclimas) que favoreçam a esporulação foliar.\n\n")
+  }
+
+  cat("O índice médio de vulnerabilidade estadual fechou em **", round(vuln_media, 1), "/100**, classificando esta safra como um cenário de **RISCO ", nivel_risco_geral, "** sistêmico.\n\n", sep = "")
+
+  if (nivel_risco_geral == "ALTO") {
+    cat("> **Atenção (Subscrição de Seguro):** Recomenda-se rigor máximo nas apólices desta safra e exigência de comprovação de aplicações de fungicidas preventivos nos polos agrícolas críticos.\n\n")
+  } else {
+    cat("> **Operação Padrão:** As apólices podem operar sob monitoramento fitossanitário padrão e eventuais bônus/descontos em áreas de menor exposição.\n\n")
+  }
+}
+```
+
+---
+
+## 2. Indicadores-Chave da Safra
+
+```{r value-boxes, results='asis'}
+if (knitr::is_html_output()) {
+  html_boxes <- paste0(
+    '<div class="value-box-container">',
+    if ("Precipitação" %in% vars) paste0('<div class="value-box info"><h4>Precipitação Jan</h4><h2>', round(chuva_media, 1), ' mm</h2></div>') else '',
+    if ("Temperatura"  %in% vars) paste0('<div class="value-box warning"><h4>Temp. Média Jan</h4><h2>', round(mean(df$temp_media, na.rm=TRUE), 1), ' °C</h2></div>') else '',
+    if ("Produtividade" %in% vars) paste0('<div class="value-box"><h4>Produção Exposta</h4><h2>', scales::comma(sum(df$producao_t, na.rm=TRUE), big.mark=".", decimal.mark=","), ' t</h2></div>') else '',
+    if ("Severidade"   %in% vars) paste0('<div class="value-box danger"><h4>Severidade Média</h4><h2>', round(mean(df$severidade_estimada_pct, na.rm=TRUE), 1), ' %</h2></div>') else '',
+    '</div>'
+  )
+  cat(html_boxes)
+} else {
+  cat("\n")
+  if ("Precipitação" %in% vars) cat("- **Precipitação Jan:** ", round(chuva_media, 1), " mm\n")
+  if ("Temperatura"  %in% vars) cat("- **Temp. Média Jan:** ", round(mean(df$temp_media, na.rm=TRUE), 1), " °C\n")
+  if ("Produtividade" %in% vars) cat("- **Produção Exposta:** ", scales::comma(sum(df$producao_t, na.rm=TRUE), big.mark=".", decimal.mark=","), " t\n")
+  if ("Severidade"   %in% vars) cat("- **Severidade Média:** ", round(mean(df$severidade_estimada_pct, na.rm=TRUE), 1), " %\n")
+  cat("\n")
+}
+```
+
+---
+
+## 3. Matriz Atuarial de Dispersão
+
+```{r scatter-plot, fig.width=10, fig.height=5}
+p <- ggplot(df, aes(x = chuva_acumulada_mm, y = severidade_estimada_pct,
+                    text = paste("Cidade:", municipio,
+                                 "<br>Produção:", scales::comma(producao_t, big.mark="."), "t",
+                                 "<br>Vulnerabilidade:", round(vulnerabilidade, 1)))) +
+  geom_point(aes(size = producao_t, color = vulnerabilidade), alpha = 0.7) +
+  scale_color_gradientn(colors = c("#2ecc71", "#f1c40f", "#e67e22", "#c0392b")) +
+  theme_minimal() +
+  labs(x = "Chuva em Janeiro (mm)", y = "Severidade Estimada (%)", color = "Risco")
+
+if (knitr::is_html_output()) {
+  ggplotly(p, tooltip = "text")
+} else {
+  p
+}
+```
+
+---
+
+## 4. Visão Espacial / Histórico Municipal
+
+```{r mapa-ou-historico, fig.width=10, fig.height=6}
+if (filtro_muni) {
+  # ---- MODO MUNICÍPIO: gráfico histórico de vulnerabilidade ----
+  df_hist_plot <- dados_hist %>%
+    filter(municipio == params$municipio) %>%
+    arrange(safra)
+
+  p_hist <- ggplot(df_hist_plot,
+                   aes(x = safra, y = vulnerabilidade, group = 1,
+                       text = paste0("Safra: ", safra,
+                                     "<br>Vulnerabilidade: ", round(vulnerabilidade, 1),
+                                     "<br>Fase ENSO: ", fase_enso))) +
+    geom_area(fill = "#1B5E20", alpha = 0.15) +
+    geom_line(color = "#1B5E20", size = 1.2) +
+    geom_point(aes(color = fase_enso), size = 4) +
+    geom_hline(yintercept = 60, linetype = "dashed", color = "#B71C1C", alpha = 0.6) +
+    geom_hline(yintercept = 35, linetype = "dashed", color = "#FBC02D", alpha = 0.6) +
+    annotate("text", x = 1, y = 62, label = "Zona Crítica (>60)",
+             hjust = 0, color = "#B71C1C", size = 3.5, fontface = "bold") +
+    annotate("text", x = 1, y = 37, label = "Zona de Alerta (>35)",
+             hjust = 0, color = "#FBC02D", size = 3.5, fontface = "bold") +
+    scale_color_manual(values = c("El Niño" = "#b71c1c", "La Niña" = "#0d47a1", "Neutro" = "#558b2f"),
+                       name = "Fase ENSO") +
+    scale_y_continuous(limits = c(0, 105)) +
+    theme_minimal(base_size = 13) +
+    theme(axis.text.x  = element_text(angle = 45, hjust = 1),
+          panel.grid.minor = element_blank(),
+          legend.position = "bottom") +
+    labs(title = paste("Evolução Histórica da Vulnerabilidade —", params$municipio),
+         subtitle = "Linha tracejada vermelha = zona crítica | Amarela = zona de alerta",
+         x = "Safra Agrícola", y = "Índice de Vulnerabilidade (0–100)")
+
+  if (knitr::is_html_output()) {
+    ggplotly(p_hist, tooltip = "text") %>%
+      layout(legend = list(orientation = "h", y = -0.2))
+  } else {
+    p_hist
+  }
+
+} else {
+  # ---- MODO ESTADO: mapa de vulnerabilidade ----
+  if (!is.null(malha_ms) && !all(is.na(malha_ms))) {
+    mapa_dados <- malha_ms %>% left_join(df, by = c("code_muni" = "cod_ibge"))
+
+    if (knitr::is_html_output()) {
+      pal <- colorNumeric(
+        palette  = c("#2ecc71", "#f1c40f", "#e67e22", "#c0392b"),
+        domain   = c(0, 100),
+        na.color = "transparent"
+      )
+      leaflet(mapa_dados) %>%
+        addProviderTiles(providers$CartoDB.Positron) %>%
+        addPolygons(
+          fillColor = ~pal(vulnerabilidade),
+          weight = 1, opacity = 1, color = "white", fillOpacity = 0.8,
+          highlightOptions = highlightOptions(weight = 3, color = "#2C3E50", bringToFront = TRUE),
+          label = ~paste0(name_muni, " | Risco: ", round(vulnerabilidade, 1)),
+          labelOptions = labelOptions(
+            style = list("font-weight" = "bold", padding = "5px", "font-family" = "sans-serif"),
+            textsize = "13px", direction = "auto"
+          )
+        ) %>%
+        addLegend("bottomright", pal = pal, values = c(0, 100), title = "Risco (0-100)", opacity = 1)
+    } else {
+      ggplot(mapa_dados) +
+        geom_sf(aes(fill = vulnerabilidade), color = "white", size = 0.2) +
+        scale_fill_gradientn(
+          colors = c("#2ecc71", "#f1c40f", "#e67e22", "#c0392b"),
+          limits = c(0, 100), name = "Risco (0-100)", na.value = "#ecf0f1"
+        ) +
+        theme_minimal() +
+        labs(title = paste("Vulnerabilidade Espacial — Safra", safra)) +
+        theme(axis.text = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank())
+    }
+  } else {
+    cat("Dados espaciais indisponíveis para gerar o mapa.")
+  }
+}
+```
+
+---
+
+## 5. Top 15 Municípios — Maior Risco
+
+```{r top-maior-tabela}
+top_maior_df <- df %>% arrange(desc(vulnerabilidade)) %>% head(15)
+top_maior    <- top_maior_df %>%
+  select(Município = municipio,
+         `Chuva (mm)`     = chuva_acumulada_mm,
+         `Severidade (%)`  = severidade_estimada_pct,
+         Vulnerabilidade   = vulnerabilidade)
+
+if (knitr::is_html_output()) {
+  datatable(top_maior, options = list(pageLength = 15, dom = 't'), rownames = FALSE) %>%
+    formatRound(columns = c('Chuva (mm)', 'Severidade (%)', 'Vulnerabilidade'), digits = 1)
+} else {
+  kable(top_maior, digits = 1, format.args = list(big.mark = ".", decimal.mark = ","))
+}
+```
+
+```{r top-maior-grafico, fig.width=10, fig.height=7}
+top_maior_long <- top_maior_df %>%
+  select(municipio, severidade_estimada_pct, chuva_acumulada_mm, temp_media, producao_t) %>%
+  tidyr::pivot_longer(-municipio, names_to = "Variavel", values_to = "Valor")
+
+top_maior_long$Variavel <- factor(top_maior_long$Variavel,
+                                  levels = c("severidade_estimada_pct", "chuva_acumulada_mm", "temp_media", "producao_t"),
+                                  labels = c("Severidade Estimada (%)", "Precipitação (mm)", "Temperatura (°C)", "Produção (t)"))
+
+p_top_maior <- ggplot(top_maior_long, aes(x = Valor, y = reorder(municipio, Valor), fill = Variavel)) +
+  geom_col() +
+  scale_fill_manual(values = c("Severidade Estimada (%)" = "#A04000",
+                               "Precipitação (mm)"        = "#1E8449",
+                               "Temperatura (°C)"         = "#D35400",
+                               "Produção (t)"             = "#D4AC0D")) +
+  facet_wrap(~Variavel, scales = "free_x", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Radiografia das 15 Cidades de Maior Risco", x = "", y = "") +
+  theme(strip.background  = element_rect(fill = "#fdfbf7", color = "#e0dbcf"),
+        strip.text        = element_text(face = "bold", color = "#2c3e50", size = 12),
+        axis.text.y       = element_text(size = 11, face = "bold"),
+        panel.spacing     = unit(2, "lines"),
+        legend.position   = "none",
+        plot.title        = element_text(margin = margin(b = 10)))
+
+if (knitr::is_html_output()) {
+  ggplotly(p_top_maior, tooltip = "x")
+} else {
+  p_top_maior
+}
+```
+
+---
+
+## 6. Top 15 Municípios — Menor Risco
+
+```{r top-menor-tabela}
+top_menor_df <- df %>% arrange(vulnerabilidade) %>% head(15)
+top_menor    <- top_menor_df %>%
+  select(Município = municipio,
+         `Chuva (mm)`     = chuva_acumulada_mm,
+         `Severidade (%)`  = severidade_estimada_pct,
+         Vulnerabilidade   = vulnerabilidade)
+
+if (knitr::is_html_output()) {
+  datatable(top_menor, options = list(pageLength = 15, dom = 't'), rownames = FALSE) %>%
+    formatRound(columns = c('Chuva (mm)', 'Severidade (%)', 'Vulnerabilidade'), digits = 1)
+} else {
+  kable(top_menor, digits = 1, format.args = list(big.mark = ".", decimal.mark = ","))
+}
+```
+
+```{r top-menor-grafico, fig.width=10, fig.height=7}
+top_menor_long <- top_menor_df %>%
+  select(municipio, severidade_estimada_pct, chuva_acumulada_mm, temp_media, producao_t) %>%
+  tidyr::pivot_longer(-municipio, names_to = "Variavel", values_to = "Valor")
+
+top_menor_long$Variavel <- factor(top_menor_long$Variavel,
+                                  levels = c("severidade_estimada_pct", "chuva_acumulada_mm", "temp_media", "producao_t"),
+                                  labels = c("Severidade Estimada (%)", "Precipitação (mm)", "Temperatura (°C)", "Produção (t)"))
+
+p_top_menor <- ggplot(top_menor_long, aes(x = Valor, y = reorder(municipio, Valor), fill = Variavel)) +
+  geom_col() +
+  scale_fill_manual(values = c("Severidade Estimada (%)" = "#A04000",
+                               "Precipitação (mm)"        = "#1E8449",
+                               "Temperatura (°C)"         = "#D35400",
+                               "Produção (t)"             = "#D4AC0D")) +
+  facet_wrap(~Variavel, scales = "free_x", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Radiografia das 15 Cidades de Menor Risco", x = "", y = "") +
+  theme(strip.background  = element_rect(fill = "#fdfbf7", color = "#e0dbcf"),
+        strip.text        = element_text(face = "bold", color = "#2c3e50", size = 12),
+        axis.text.y       = element_text(size = 11, face = "bold"),
+        panel.spacing     = unit(2, "lines"),
+        legend.position   = "none",
+        plot.title        = element_text(margin = margin(b = 10)))
+
+if (knitr::is_html_output()) {
+  ggplotly(p_top_menor, tooltip = "x")
+} else {
+  p_top_menor
+}
+```
+
+---
+
+## 7. Conclusão e Diretriz Corporativa
+
+```{r conclusao, results='asis'}
+n_cidades       <- nrow(df)
+cidades_criticas <- df %>% filter(vulnerabilidade > 60) %>% nrow()
+pct_criticas    <- round((cidades_criticas / n_cidades) * 100, 1)
+
+prod_afetada    <- df %>% filter(vulnerabilidade > 60) %>% pull(producao_t) %>% sum(na.rm = TRUE)
+prod_total      <- sum(df$producao_t, na.rm = TRUE)
+pct_prod_afetada <- round((prod_afetada / prod_total) * 100, 1)
+
+cat("A análise sistêmica desta safra consolida um cenário de risco **", nivel_risco_geral,
+    "** sob as condições climatológicas da fase **", fase_macro, "**.\n\n", sep = "")
+
+cat("Através do nosso processamento de inteligência atuarial, rastreamos que **", cidades_criticas,
+    "** municípios operam na zona crítica de vulnerabilidade biológica e comercial (Score > 60), o que representa **",
+    pct_criticas, "%** da matriz produtiva do estado.\n\n", sep = "")
+
+if (!is.na(pct_prod_afetada) && pct_prod_afetada > 0) {
+  cat("Sob a ótica financeira, a materialização da ferrugem nestas regiões críticas expõe aproximadamente **",
+      scales::comma(prod_afetada, big.mark = ".", decimal.mark = ","),
+      " toneladas** de soja ao potencial de quebra, totalizando **", pct_prod_afetada,
+      "%** de toda a base produtiva estadual.\n\n", sep = "")
+}
+
+cat("#### Diretriz Corporativa e Precificacao de Risco\n\n")
+
+if (nivel_risco_geral == "ALTO") {
+  cat("Face à forte agressividade epidemiológica e alta severidade cruzada com grandes polos de produção, **desaconselha-se a expansão agressiva de portfólios de seguros de taxa fixa**. As apólices emitidas para esta safra devem adotar gatilhos de governança fitossanitária (exigência de três a quatro aplicações de fungicidas sistêmicos e curativos). A operação de crédito rural deve focar na blindagem financeira de passivos de produtores localizados no Top 15 de Maior Risco.\n")
+} else if (nivel_risco_geral == "MODERADO") {
+  cat("O cenário se apresenta de forma pulverizada e com focos regionalizados de atenção. **A estratégia ideal é a segmentação dinâmica dos prêmios de seguro e taxas de juros**. Municípios no Top 15 de Menor Risco representam oportunidades e devem receber descontos para atração de bons produtores, ao passo que as cidades no radar de alerta deverão ser submetidas a vistorias de peritos em campo antes de qualquer liquidação de prêmios de sinistro.\n")
+} else {
+  cat("Observa-se um ambiente fitossanitário muito favorável, marcado pela **altíssima controlabilidade biológica e supressão epidemiológica natural**. É o timing comercial perfeito para seguradoras e cooperativas alavancarem o *market share* estadual. Recomenda-se políticas de crédito com taxas bastante competitivas, visto que a probabilidade real de colapso massivo por Ferrugem Asiática encontra-se matematicamente diluída nesta safra.\n")
+}
+```
+
+---
+
+*Relatório gerado automaticamente pelo sistema AgroRisk MS — FIP 606*

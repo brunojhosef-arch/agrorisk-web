@@ -1,0 +1,143 @@
+/* AgroRisk MS - Custom Quarto Theme */
+
+:root {
+    --bg-color: #050810;
+    --card-bg: rgba(15, 23, 42, 0.4);
+    --card-border: rgba(255, 255, 255, 0.08);
+    --card-hover-border: rgba(0, 240, 255, 0.4);
+    --text-primary: #ffffff;
+    --text-secondary: #94a3b8;
+    --accent: #00f0ff;
+    --accent-glow: rgba(0, 240, 255, 0.2);
+    --purple: #8b5cf6;
+    --purple-glow: rgba(139, 92, 246, 0.2);
+}
+
+body {
+    background-color: var(--bg-color);
+    background-image: 
+        radial-gradient(circle at 10% 40%, var(--purple-glow), transparent 30%),
+        radial-gradient(circle at 90% 60%, var(--accent-glow), transparent 30%);
+    background-attachment: fixed;
+    color: var(--text-primary);
+    font-family: 'Inter', sans-serif;
+}
+
+/* Headings & Typography */
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Outfit', sans-serif;
+    color: var(--text-primary);
+}
+
+h1.title {
+    font-weight: 800;
+    font-size: 2.8rem;
+    background: linear-gradient(135deg, #ffffff 0%, #a5b4fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.5rem;
+}
+
+p.subtitle {
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    font-weight: 300;
+}
+
+/* Hero Image */
+.hero-image {
+    width: 100%;
+    max-width: 900px;
+    border-radius: 16px;
+    margin: 20px auto 40px auto;
+    display: block;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.6), 0 0 30px var(--purple-glow);
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* Callouts Styling */
+div.callout-note {
+    background-color: rgba(0, 240, 255, 0.05);
+    border-left-color: var(--accent);
+    color: var(--text-primary);
+}
+div.callout-note .callout-header {
+    background-color: rgba(0, 240, 255, 0.1);
+    color: var(--accent);
+}
+
+/* Tabset Styling */
+.nav-tabs {
+    border-bottom: 1px solid var(--card-border);
+    margin-bottom: 20px;
+    gap: 10px;
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.nav-tabs .nav-link {
+    color: var(--text-secondary);
+    border: none !important;
+    border-radius: 30px;
+    padding: 10px 20px;
+    font-family: 'Outfit', sans-serif;
+    font-weight: 500;
+    background: transparent;
+    transition: all 0.3s ease;
+}
+
+.nav-tabs .nav-link:hover {
+    color: var(--text-primary);
+    background: rgba(255,255,255,0.05);
+}
+
+.nav-tabs .nav-link.active, .nav-tabs .nav-item.show .nav-link {
+    color: var(--text-primary);
+    background-color: rgba(255,255,255,0.1) !important;
+    border: 1px solid var(--card-border) !important;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+}
+
+/* Code Blocks & Pre */
+pre, .sourceCode {
+    background-color: var(--card-bg) !important;
+    border: 1px solid var(--card-border) !important;
+    border-radius: 8px;
+    backdrop-filter: blur(10px);
+    color: #e2e8f0;
+}
+
+/* Charts & Images inside output */
+.cell-output-display img {
+    background-color: #ffffff; /* Keep charts white inside dark mode */
+    border-radius: 12px;
+    padding: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    border: 1px solid var(--card-border);
+    transition: transform 0.3s ease;
+    display: block;
+    margin: 10px auto;
+}
+
+.cell-output-display img:hover {
+    transform: scale(1.02);
+}
+
+/* TOC (Table of Contents) Sidebar */
+#TOC {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    padding: 20px;
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+}
+
+#TOC a {
+    color: var(--text-secondary);
+    transition: color 0.3s ease;
+}
+
+#TOC a:hover, #TOC a.active {
+    color: var(--accent);
+    text-decoration: none;
+}
